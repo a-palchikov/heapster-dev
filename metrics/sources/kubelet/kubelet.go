@@ -38,10 +38,11 @@ import (
 const (
 	infraContainerName = "POD"
 	// TODO: following constants are copied from k8s, change to use them directly
-	kubernetesPodNameLabel      = "io.kubernetes.pod.name"
-	kubernetesPodNamespaceLabel = "io.kubernetes.pod.namespace"
-	kubernetesPodUID            = "io.kubernetes.pod.uid"
-	kubernetesContainerLabel    = "io.kubernetes.container.name"
+	kubernetesPodNameLabel       = "io.kubernetes.pod.name"
+	kubernetesPodNamespaceLabel  = "io.kubernetes.pod.namespace"
+	kubernetesPodUID             = "io.kubernetes.pod.uid"
+	kubernetesContainerLabel     = "io.kubernetes.container.name"
+	kubernetesContainerKindLabel = "io.cri-containerd.kind"
 )
 
 var (
@@ -103,7 +104,7 @@ func (this *kubeletMetricsSource) handleSystemContainer(c *cadvisor.ContainerInf
 
 func (this *kubeletMetricsSource) handleKubernetesContainer(cName, ns, podName string, c *cadvisor.ContainerInfo, cMetrics *MetricSet) string {
 	var metricSetKey string
-	if cName == infraContainerName {
+	if isSandboxContainer(c) {
 		metricSetKey = PodKey(ns, podName)
 		cMetrics.Labels[LabelMetricSetType.Key] = MetricSetTypePod
 	} else {
@@ -144,6 +145,7 @@ func (this *kubeletMetricsSource) decodeMetrics(c *cadvisor.ContainerInfo) (stri
 		cName := c.Spec.Labels[kubernetesContainerLabel]
 		ns := c.Spec.Labels[kubernetesPodNamespaceLabel]
 		podName := c.Spec.Labels[kubernetesPodNameLabel]
+		isSandbox := isSandboxContainer(c)
 
 		// Support for kubernetes 1.0.*
 		if ns == "" && strings.Contains(podName, "/") {
@@ -153,7 +155,7 @@ func (this *kubeletMetricsSource) decodeMetrics(c *cadvisor.ContainerInfo) (stri
 				podName = tokens[1]
 			}
 		}
-		if cName == "" {
+		if cName == "" && !isSandbox {
 			// Better this than nothing. This is a temporary hack for new heapster to work
 			// with Kubernetes 1.0.*.
 			// TODO: fix this with POD list.
@@ -167,7 +169,7 @@ func (this *kubeletMetricsSource) decodeMetrics(c *cadvisor.ContainerInfo) (stri
 		}
 
 		// No Kubernetes metadata so treat this as a system container.
-		if cName == "" || ns == "" || podName == "" {
+		if (cName == "" && !isSandbox) || ns == "" || podName == "" {
 			metricSetKey = this.handleSystemContainer(c, cMetrics)
 		} else {
 			metricSetKey = this.handleKubernetesContainer(cName, ns, podName, c, cMetrics)
@@ -362,4 +364,9 @@ func NewKubeletProvider(uri *url.URL) (MetricsSourceProvider, error) {
 		reflector:     reflector,
 		kubeletClient: kubeletClient,
 	}, nil
+}
+
+func isSandboxContainer(c *cadvisor.ContainerInfo) bool {
+	return c.Spec.Labels[kubernetesContainerKindLabel] == "sandbox" ||
+		c.Spec.Labels[kubernetesContainerLabel] == infraContainerName
 }
